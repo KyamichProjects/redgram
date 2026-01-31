@@ -1,30 +1,35 @@
-
 const { WebSocketServer } = require('ws');
 
-const wss = new WebSocketServer({ port: 8080, host: '0.0.0.0' });
+// Render ОБЯЗАТЕЛЬНО передаёт порт через env
+const PORT = process.env.PORT || 8080;
+
+// WebSocket сервер
+const wss = new WebSocketServer({
+    port: PORT,
+    host: '0.0.0.0'
+});
 
 // In-memory store
 let users = [];
-let messages = {}; // chatId -> messages[]
 
-console.log('🔴 RedGram Server started on port 8080');
-console.log('You can now connect from different browsers or devices in your local network.');
+console.log(`🔴 RedGram WebSocket server started on port ${PORT}`);
 
 function broadcast(data, excludeWs = null) {
+    const payload = JSON.stringify(data);
     wss.clients.forEach((client) => {
         if (client.readyState === 1 && client !== excludeWs) {
-            client.send(JSON.stringify(data));
+            client.send(payload);
         }
     });
 }
 
 wss.on('connection', (ws) => {
-    console.log('New client connected');
+    console.log('🟢 New client connected');
 
-    // 1. Send current state to the new client
-    ws.send(JSON.stringify({ 
-        type: 'INIT_STATE', 
-        users: users 
+    // Send initial state
+    ws.send(JSON.stringify({
+        type: 'INIT_STATE',
+        users
     }));
 
     ws.on('message', (message) => {
@@ -32,57 +37,64 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
 
             switch (data.type) {
-                case 'REGISTER':
-                    // Check if user exists
-                    const existingUserIndex = users.findIndex(u => u.username === data.profile.username);
-                    if (existingUserIndex >= 0) {
-                        users[existingUserIndex] = data.profile; // Update info
+                case 'REGISTER': {
+                    const index = users.findIndex(
+                        (u) => u.username === data.profile.username
+                    );
+
+                    if (index >= 0) {
+                        users[index] = data.profile;
                     } else {
                         users.push(data.profile);
                     }
-                    console.log(`User registered: ${data.profile.username}`);
-                    
-                    // Broadcast new user to everyone else
-                    broadcast({ 
-                        type: 'USER_JOINED', 
-                        profile: data.profile 
-                    }, ws);
-                    break;
 
-                case 'SEND_MESSAGE':
-                    console.log(`Message from ${data.message.senderId} to ${data.message.chatId}`);
-                    // Broadcast to everyone (client handles filtering)
-                    broadcast({
-                        type: 'NEW_MESSAGE',
-                        message: {
-                            ...data.message,
-                            sender: 'them', // Ensure receiver sees it as 'them'
-                            status: 'sent'
-                        }
-                    }, ws);
-                    break;
-                
-                case 'READ_RECEIPT':
-                    // Broadcast that messages were read
-                    console.log(`Messages read in chat ${data.chatId} by ${data.readerId}`);
-                    broadcast({
-                        type: 'MESSAGE_READ',
-                        chatId: data.chatId,
-                        messageIds: data.messageIds,
-                        readerId: data.readerId
-                    }, ws);
-                    break;
+                    console.log(`👤 User registered: ${data.profile.username}`);
 
-                case 'PRESENCE':
-                    // Simple echo for now, could update user status
+                    broadcast(
+                        { type: 'USER_JOINED', profile: data.profile },
+                        ws
+                    );
                     break;
+                }
+
+                case 'SEND_MESSAGE': {
+                    console.log(
+                        `💬 Message from ${data.message.senderId} to ${data.message.chatId}`
+                    );
+
+                    broadcast(
+                        {
+                            type: 'NEW_MESSAGE',
+                            message: {
+                                ...data.message,
+                                sender: 'them',
+                                status: 'sent'
+                            }
+                        },
+                        ws
+                    );
+                    break;
+                }
+
+                case 'READ_RECEIPT': {
+                    broadcast(
+                        {
+                            type: 'MESSAGE_READ',
+                            chatId: data.chatId,
+                            messageIds: data.messageIds,
+                            readerId: data.readerId
+                        },
+                        ws
+                    );
+                    break;
+                }
             }
-        } catch (e) {
-            console.error('Error parsing message:', e);
+        } catch (err) {
+            console.error('❌ Invalid message:', err);
         }
     });
 
     ws.on('close', () => {
-        console.log('Client disconnected');
+        console.log('🔴 Client disconnected');
     });
 });
